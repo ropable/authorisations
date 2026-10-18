@@ -8,7 +8,7 @@ import { makeApplication, makeQuestionnaire } from "../../../fixtures";
 
 const {
   apiMocks,
-  localStorageMocks,
+  setFormStateMock,
   showSnackbarMock,
   turnstileRenderMock,
   useLoaderDataMock,
@@ -16,9 +16,7 @@ const {
   apiMocks: {
     updateApplication: vi.fn(),
   },
-  localStorageMocks: {
-    setFormState: vi.fn(),
-  },
+  setFormStateMock: vi.fn(),
   showSnackbarMock: vi.fn(),
   turnstileRenderMock: vi.fn(),
   useLoaderDataMock: vi.fn(),
@@ -44,9 +42,16 @@ vi.mock("../../../../../context/ApiManager", () => ({
   ApiManager: apiMocks,
 }));
 
-vi.mock("../../../../../context/LocalStorage", () => ({
-  LocalStorage: localStorageMocks,
-}));
+vi.mock("../../../../../context/LocalStorage", async () => {
+  const actual = await vi.importActual<typeof import("../../../../../context/LocalStorage")>("../../../../../context/LocalStorage");
+  return {
+    ...actual,
+    LocalStorage: {
+      ...actual.LocalStorage,
+      setFormState: setFormStateMock,
+    },
+  };
+});
 
 vi.mock("../../../../../context/TurnstileManager", () => ({
   TurnstileManager: {
@@ -168,7 +173,7 @@ describe("FormLayout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() => {
-      expect(localStorageMocks.setFormState).toHaveBeenCalledTimes(1);
+      expect(setFormStateMock).toHaveBeenCalledTimes(1);
     });
     expect(showSnackbarMock).toHaveBeenCalledWith(
       "Failed to save: save failed",
@@ -191,8 +196,49 @@ describe("FormLayout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() => {
-      expect(localStorageMocks.setFormState).toHaveBeenCalledTimes(1);
+      expect(setFormStateMock).toHaveBeenCalledTimes(1);
     });
     expect(apiMocks.updateApplication).not.toHaveBeenCalled();
+  });
+
+  it("displays both process name and questionnaire name in the app bar", () => {
+    render(<FormLayout />);
+
+    // Both process name and questionnaire name should be in the document
+    const appBar = screen.getByRole("banner");
+    expect(appBar).toHaveTextContent("Section 40");
+    expect(appBar).toHaveTextContent("New application");
+  });
+
+  it("displays internal_id in the app bar and is clickable to copy", async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn(() => Promise.resolve()),
+      },
+    });
+
+    render(<FormLayout />);
+
+    // Internal ID should be in the app bar
+    const appBar = screen.getByRole("banner");
+    const internalIdText = screen.getByText("s40-new-1/26-05");
+    expect(appBar).toContainElement(internalIdText);
+
+    // Click the internal ID to copy
+    fireEvent.click(internalIdText);
+
+    // Verify clipboard API was called with correct value (including # prefix)
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("#s40-new-1/26-05");
+    });
+
+    // Verify snackbar feedback
+    expect(showSnackbarMock).toHaveBeenCalledWith("Application ID copied to clipboard", "info");
+  });
+
+  it("sets the page title to 'process_name / questionnaire_name : DBCA Authorisations'", () => {
+    render(<FormLayout />);
+
+    expect(document.title).toBe("Section 40 / New application : DBCA Authorisations");
   });
 });

@@ -12,13 +12,14 @@ from questionnaires.models import Questionnaire
 from rest_framework import exceptions, serializers, status
 
 from .models import (
-    REVIEW_QUEUE_STATUSES,
-    REVIEWER_SETTABLE_STATUSES,
     Application,
     ApplicationAttachment,
+)
+from .schema import SCHEMA_VERSION, get_answers_schema
+from .statuses import (
+    REVIEW_QUEUE_STATUSES,
     ApplicationStatus,
 )
-from .schema import get_answers_schema
 
 
 def verify_turnstile_token(
@@ -71,13 +72,23 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
     Serializer for the Application model.
     """
 
-    owner = serializers.CharField(
+    owner_email = serializers.CharField(
         source="owner.username",
         required=False,
         read_only=True,
     )
+    owner_fullname = serializers.SerializerMethodField(
+        required=False,
+        read_only=True,
+        method_name="get_owner_fullname",
+    )
     process_slug = serializers.SlugField(
         source="questionnaire.process.slug",
+        required=False,
+        read_only=True,
+    )
+    process_sort_order = serializers.IntegerField(
+        source="questionnaire.process.sort_order",
         required=False,
         read_only=True,
     )
@@ -101,7 +112,12 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
         required=False,
         read_only=True,
     )
-    privacy_consent_agreed = serializers.BooleanField(
+    questionnaire_sort_order = serializers.IntegerField(
+        source="questionnaire.sort_order",
+        required=False,
+        read_only=True,
+    )
+    collection_notice_agreed = serializers.BooleanField(
         required=False,
         write_only=True,
     )
@@ -125,13 +141,16 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
             "id",
             "key",
             "internal_id",
-            "owner",
+            "owner_email",
+            "owner_fullname",
             "process_slug",
+            "process_sort_order",
             "questionnaire_id",
             "questionnaire_code",
             "questionnaire_name",
             "questionnaire_version",
-            "privacy_consent_agreed",
+            "questionnaire_sort_order",
+            "collection_notice_agreed",
             "turnstile_token",
             "status",
             "created_at",
@@ -141,6 +160,16 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
         )
         # All fields are read-only by default (see `.get_fields()` method).
         read_only_fields = fields
+
+    def get_owner_fullname(self, obj: Application) -> str:
+        """Return the owner's full name (first_name + last_name)."""
+        owner = getattr(obj, "owner", None)
+        if owner is None:
+            return ""
+        first_name = getattr(owner, "first_name", "").strip()
+        last_name = getattr(owner, "last_name", "").strip()
+        fullname = f"{first_name} {last_name}".strip()
+        return fullname or getattr(owner, "username", "")
 
     def get_fields(self, *args, **kwargs):
         fields = super().get_fields(*args, **kwargs)
@@ -164,9 +193,9 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
         # Questionnaire version is required when creating (to confirm data integrity)
         fields["questionnaire_version"].required = isPost
         fields["questionnaire_version"].read_only = not isPost
-        # Privacy consent acknowledgement is required when creating for auditability.
-        fields["privacy_consent_agreed"].required = isPost
-        fields["privacy_consent_agreed"].read_only = not isPost
+        # Collection notice acknowledgement is required when creating for auditability.
+        fields["collection_notice_agreed"].required = isPost
+        fields["collection_notice_agreed"].read_only = not isPost
         # Turnstile verification token is required during create and final submit PATCH.
         fields["turnstile_token"].required = isPost or isPatch
         fields["turnstile_token"].read_only = not (isPost or isPatch)
@@ -199,13 +228,54 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
 
     def validate_status(self, value):
         """
-        Validate the status field to ensure only allowed transitions.
+        Validate applicant-initiated status transitions per STATUS-WORKFLOW.md.
+
+        Enforces the workflow state machine for applicants:
+        - DRAFT → SUBMITTED: Submit application for review (with Turnstile verification)
+        - DRAFT → DISCARDED: Applicant abandons the draft application
+        - DISCARDED → DRAFT: Applicant reverts the discard decision
+        - Any pre-decision state → WITHDRAWN: Applicant withdraws the application
+
+        The pre-decision states (allowing withdrawal) are: DRAFT, SUBMITTED,
+        UNDER_REVIEW, UNDER_ASSESSMENT. These can transition to WITHDRAWN at any
+        time before a final decision (APPROVED, REJECTED, etc.) is made.
+
+        Args:
+            value: The requested target status
+
+        Returns:
+            str: The validated status value if transition is permitted
+
+        Raises:
+            ValidationError: If the transition is not allowed from current status
         """
         # Draft -> Submitted
         if (
             self.instance.status == ApplicationStatus.DRAFT
             and value == ApplicationStatus.SUBMITTED
         ):
+            return value
+
+        # Draft -> Discarded (applicant abandons draft)
+        if (
+            self.instance.status == ApplicationStatus.DRAFT
+            and value == ApplicationStatus.DISCARDED
+        ):
+            return value
+
+        # Discarded -> Draft (applicant reverts the discard decision)
+        if (
+            self.instance.status == ApplicationStatus.DISCARDED
+            and value == ApplicationStatus.DRAFT
+        ):
+            return value
+
+        # Owner can withdraw from any pre-decision state
+        if value == ApplicationStatus.WITHDRAWN and self.instance.status in [
+            ApplicationStatus.SUBMITTED,
+            ApplicationStatus.UNDER_REVIEW,
+            ApplicationStatus.UNDER_ASSESSMENT,
+        ]:
             return value
 
         raise exceptions.ValidationError(
@@ -249,9 +319,22 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
         return value
 
     def validate_document(self, value):
+        """Validate document schema version and structure.
+
+        Enforces that the document has schema_version matching the current
+        application schema version (SCHEMA_VERSION from applications.schema).
+        """
+        # Check status first (original behavior - prevents modification of non-DRAFT applications)
         if self.instance.status != ApplicationStatus.DRAFT:
             raise exceptions.ValidationError(
                 f"Cannot modify document with status '{self.instance.status}'"
+            )
+
+        # Then check schema version
+        doc_version = value.get("schema_version") if isinstance(value, dict) else None
+        if doc_version != SCHEMA_VERSION:
+            raise exceptions.ValidationError(
+                f"Schema version mismatch: expected {SCHEMA_VERSION}, got {doc_version}. "
             )
 
         # Validate and return with the JSON schema
@@ -275,7 +358,7 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
         questionnaire_id = questionnaire_data.get("id")
         questionnaire_code = questionnaire_data.get("code")
         questionnaire_version = questionnaire_data.get("version")
-        privacy_consent_agreed = attrs.get("privacy_consent_agreed")
+        collection_notice_agreed = attrs.get("collection_notice_agreed")
 
         # Ensure all integrity fields are present.
         if (
@@ -288,11 +371,11 @@ class ApplicationSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerializ
                 "Process slug, questionnaire id, code and version are required."
             )
 
-        # Creation is allowed only when explicit consent is acknowledged.
-        if privacy_consent_agreed is not True:
+        # Creation is allowed only when explicit collection notice consent is acknowledged.
+        if collection_notice_agreed is not True:
             raise exceptions.ValidationError(
                 {
-                    "privacy_consent_agreed": "This field must be true to create an application."
+                    "collection_notice_agreed": "This field must be true to create an application."
                 }
             )
 
@@ -400,6 +483,7 @@ class AttachmentSerialiser(serializers.ModelSerializer):
             "application_key",
             "question",
             "name",
+            "size",
             "file",
             "created_at",
             "download_url",
@@ -408,6 +492,7 @@ class AttachmentSerialiser(serializers.ModelSerializer):
             "key",
             "application_key",
             "question",
+            "size",
             "created_at",
             "download_url",
         )
@@ -501,6 +586,18 @@ class AttachmentSerialiser(serializers.ModelSerializer):
         self.context["application"] = application
         return value
 
+    def validate_name(self, value):
+        """
+        Validate and normalise the attachment name by trimming whitespace.
+        Ensure the name is not empty after trimming.
+        """
+        name = value.strip() if value else ""
+        if not name:
+            raise serializers.ValidationError(
+                "Name cannot be empty or contain only whitespace."
+            )
+        return name
+
     def validate_question(self, value):
         """
         Validate the question index format (does not parse definition here).
@@ -588,6 +685,7 @@ class AttachmentSerialiser(serializers.ModelSerializer):
                 "application": application,
                 "question": validated_data["question"],
                 "name": validated_data["name"],
+                "size": validated_data["file"].size,
                 "file": validated_data["file"],
             }
         except KeyError as e:
@@ -597,7 +695,7 @@ class AttachmentSerialiser(serializers.ModelSerializer):
         # Use select_for_update() to serialize concurrent requests for the same application
         # and prevent race conditions where multiple requests bypass the attachment limit check
         question_idx = validated_data["question"]
-        max_attachments = min(question_def.get("file_max_attachments") or 1, 20)
+        max_attachments = min(question_def.get("config", {}).get("file_max_attachments") or 1, 20)
 
         with transaction.atomic():
             # Lock the application row to prevent concurrent attachment creation
@@ -646,23 +744,32 @@ class AttachmentSerialiser(serializers.ModelSerializer):
         return instance
 
 
-class AssessmentSerialiser(serializers.ModelSerializer):
+class ReviewerSerialiser(serializers.ModelSerializer):
     """
-    Serialiser for the assessment-facing application view.
+    Serialiser for the reviewer-facing application view.
 
-    All fields are read-only except ``status``, which an assessor may advance
+    All fields are read-only except ``status``, which a reviewer may advance
     via PATCH. Transition validation enforces that:
       - the current status is a review-queue status (i.e. the application is
-        actually awaiting assessor action), and
-      - the requested status is one an assessor is permitted to set.
+        actually awaiting reviewer action), and
+      - the requested status is one a reviewer is permitted to set.
     """
 
-    owner = serializers.CharField(
+    owner_email = serializers.CharField(
         source="owner.username",
         read_only=True,
     )
+    owner_fullname = serializers.SerializerMethodField(
+        required=False,
+        read_only=True,
+        method_name="get_owner_fullname",
+    )
     process_slug = serializers.SlugField(
         source="questionnaire.process.slug",
+        read_only=True,
+    )
+    process_sort_order = serializers.IntegerField(
+        source="questionnaire.process.sort_order",
         read_only=True,
     )
     questionnaire_id = serializers.IntegerField(
@@ -677,6 +784,10 @@ class AssessmentSerialiser(serializers.ModelSerializer):
         source="questionnaire.version",
         read_only=True,
     )
+    questionnaire_sort_order = serializers.IntegerField(
+        source="questionnaire.sort_order",
+        read_only=True,
+    )
     internal_id = serializers.CharField(read_only=True)
 
     class Meta:
@@ -685,11 +796,14 @@ class AssessmentSerialiser(serializers.ModelSerializer):
             "id",
             "key",
             "internal_id",
-            "owner",
+            "owner_email",
+            "owner_fullname",
             "process_slug",
+            "process_sort_order",
             "questionnaire_id",
             "questionnaire_name",
             "questionnaire_version",
+            "questionnaire_sort_order",
             "status",
             "created_at",
             "updated_at",
@@ -697,6 +811,16 @@ class AssessmentSerialiser(serializers.ModelSerializer):
         )
         # All fields are read-only by default; status is made writable via PATCH in get_fields().
         read_only_fields = fields
+
+    def get_owner_fullname(self, obj: Application) -> str:
+        """Return the owner's full name (first_name + last_name)."""
+        owner = getattr(obj, "owner", None)
+        if owner is None:
+            return ""
+        first_name = getattr(owner, "first_name", "").strip()
+        last_name = getattr(owner, "last_name", "").strip()
+        fullname = f"{first_name} {last_name}".strip()
+        return fullname or getattr(owner, "username", "")
 
     def get_fields(self, *args, **kwargs):
         fields = super().get_fields(*args, **kwargs)
@@ -712,24 +836,71 @@ class AssessmentSerialiser(serializers.ModelSerializer):
 
     def validate_status(self, value: str) -> str:
         """
-        Validate that the requested status transition is permitted for an assessor.
+        Validate reviewer-initiated status transitions per STATUS-WORKFLOW.md.
 
-        Rejects transitions from non-queue statuses (e.g. DRAFT) to prevent
-        assessors from accidentally acting on applications that are not yet in
-        their queue, and rejects attempts to set applicant-only statuses.
+        Enforces strict state machine transitions for reviewers:
+
+        SUBMITTED state:
+        - → UNDER_REVIEW: Reviewer claims the application for administrative review
+
+        UNDER_REVIEW state:
+        - → DRAFT: Return to applicant for additional information
+        - → UNDER_ASSESSMENT: Escalate to next stage for technical assessment
+
+        UNDER_ASSESSMENT state:
+        - → DRAFT: Return to applicant for re-submission
+        - → APPROVED: Final decision: approved
+        - → APPROVED_WITH_CONDITIONS: Final decision: approved with conditions
+        - → REJECTED: Final decision: rejected
+        - → DEFERRED: Final decision: deferred for later review
+
+        This validation ensures:
+        1. Applications only progress through designated review queue states
+        2. Invalid state progressions are rejected at the validation layer
+        3. Staff cannot set applicant-only statuses (DISCARDED, WITHDRAWN)
+        4. The workflow respects the role boundaries in STATUS-WORKFLOW.md
+
+        Args:
+            value: The requested target status (must be ApplicationStatus enum value)
+
+        Returns:
+            str: The validated status value if transition is permitted
+
+        Raises:
+            ValidationError: If the application is not in the review queue, or the
+                           transition is not permitted from the current status
         """
         current = self.instance.status
 
         # Guard: the application must actually be in the review queue.
         if current not in REVIEW_QUEUE_STATUSES:
             raise exceptions.ValidationError(
-                f"Application with status '{current}' is not in the assessment queue."
+                f"Application with status '{current}' is not in the review queue."
             )
 
-        # Guard: the target status must be one assessors are permitted to set.
-        if value not in REVIEWER_SETTABLE_STATUSES:
+        # Define permitted transitions per current status (using STATUS-WORKFLOW.md)
+        permitted_transitions = {
+            ApplicationStatus.SUBMITTED: [
+                ApplicationStatus.UNDER_REVIEW,  # Reviewer claims for administrative review
+            ],
+            ApplicationStatus.UNDER_REVIEW: [
+                ApplicationStatus.DRAFT,  # Return to applicant for more information
+                ApplicationStatus.UNDER_ASSESSMENT,  # Move to technical assessment
+            ],
+            ApplicationStatus.UNDER_ASSESSMENT: [
+                ApplicationStatus.DRAFT,  # Return to applicant for re-submission
+                ApplicationStatus.APPROVED,  # Final decision: approved
+                ApplicationStatus.APPROVED_WITH_CONDITIONS,  # Final decision: approved with conditions
+                ApplicationStatus.REJECTED,  # Final decision: rejected
+                ApplicationStatus.DEFERRED,  # Final decision: deferred
+            ],
+        }
+
+        allowed = permitted_transitions.get(current, [])
+        if value not in allowed:
             raise exceptions.ValidationError(
-                f"Status '{value}' cannot be set by an assessor."
+                f"Cannot transition from {current} to {value}. "
+                f"Permitted transitions from {current}: {', '.join(allowed) or 'none'}."
             )
 
         return value

@@ -1,6 +1,7 @@
 import BlockIcon from '@mui/icons-material/Block';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import DriveFolderUploadIcon from '@mui/icons-material/DriveFolderUpload';
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import FormHelperText from "@mui/material/FormHelperText";
@@ -20,7 +21,7 @@ import { useSnackbar } from '../../context/Hooks';
 import type { IApplicationAttachment } from '../../context/types/Application';
 import type { Question } from "../../context/types/Questionnaire";
 import { VisuallyHiddenInput } from '../../context/Utils';
-import { FileAttachmentList } from '../Common';
+import { FileAttachmentList, HintButton } from '../Common';
 
 
 export const FileInput = ({
@@ -50,7 +51,7 @@ export const FileInput = ({
 
     // Maximum attachments allowed for this question
     // Defaults to 1 (if not specified or zero) with the hard limit 20
-    const maxAttachments = Math.min(question.o.file_max_attachments || 1, 20);
+    const maxAttachments = Math.min(question.o.config?.file_max_attachments || 1, 20);
 
     // Use controller hook to manage field state
     const { field, fieldState } = useController({
@@ -85,9 +86,7 @@ export const FileInput = ({
         <Box className="w-full">
             <Typography variant="h6">
                 {question.labelText}
-            </Typography>
-            <Typography variant="subtitle1">
-                {question.o.description}
+                {question.o.config?.hint && <HintButton hint={question.o.config.hint} />}
             </Typography>
             {/* Display the tiled attachment list if there are attachments */}
             {attachments.length > 0 &&
@@ -109,8 +108,13 @@ export const FileInput = ({
                 />
             }
             {fieldState.invalid &&
-                <FormHelperText error>
+                <Alert severity="error" sx={{ mt: 1 }}>
                     {fieldState.error?.message}
+                </Alert>
+            }
+            {question.o.description &&
+                <FormHelperText>
+                    {question.o.description}
                 </FormHelperText>
             }
         </Box>
@@ -181,16 +185,15 @@ const DropzoneDialogContent = ({
     }, []);
 
     /**
-     * Handles the file drop event, uploads the file via API, and updates the form state.
+     * Handles accepted files: uploads the file via API and updates the form state.
+     * In react-dropzone v20, this is called only for files accepted by the dropzone.
      */
-    const onDrop = React.useCallback(async (acceptedFiles: File[], fileRejections: FileRejection[]) => {
-        // Dropped file(s) has been rejected - we want exactly 1 accepted file.
-        if (acceptedFiles.length !== 1 || fileRejections.length !== 0) {
+    const onDropAccepted = React.useCallback(async (acceptedFiles: File[]) => {
+        // Guard: onDropAccepted should only be called when the dropzone accepts files
+        // With multiple=false, we expect exactly 1 file. If we somehow get more, reject it.
+        if (acceptedFiles.length !== 1) {
             setHadDropRejected(true);
-            // console.debug("File drop rejected", { acceptedFiles, fileRejections });
-            // const message = fileRejections[0]?.errors?.[0]?.message ??
-            //     "Invalid file type, please ensure it meets the requirements.";
-            showSnackbar("Invalid file type, please ensure it meets the requirements.", "error");
+            showSnackbar("Only one file can be uploaded at a time.", "error");
             resetDropzoneState(3);
             return;
         }
@@ -237,6 +240,17 @@ const DropzoneDialogContent = ({
         if (!response) return;
     }, [applicationKey, field, onAttachmentAdded, resetDropzoneState, showSnackbar]);
 
+    /**
+     * Handles rejected files: displays error message and resets dropzone state.
+     * In react-dropzone v20, this is called separately for files rejected by the dropzone
+     * (e.g., wrong type, oversized, etc.).
+     */
+    const onDropRejected = React.useCallback((_fileRejections: FileRejection[]) => {
+        setHadDropRejected(true);
+        showSnackbar("Invalid file type, please ensure it meets the requirements.", "error");
+        resetDropzoneState(3);
+    }, [resetDropzoneState, showSnackbar]);
+
     // Build the accept map expected by react-dropzone from the configured
     // mime types. react-dropzone accepts an object like { "image/png": [] }
     // where the array can contain file extensions; we don't need extensions
@@ -257,12 +271,9 @@ const DropzoneDialogContent = ({
         isDragReject,
     } = useDropzone({
         validator: fileSizeValidator,
-        onDrop,
+        onDropAccepted,
+        onDropRejected,
         onDragLeave: () => resetDropzoneState(0),
-        onDropRejected: () => {
-            setHadDropRejected(true);
-            resetDropzoneState(3);
-        },
         accept: acceptedTypes,
         multiple: false,
         noClick: true,
@@ -293,6 +304,7 @@ const DropzoneDialogContent = ({
         className: 'dropzone w-full flex flex-col gap-6 py-4 px-8 mt-4 ' +
             'items-center text-center border-2 border-dashed rounded-md ' +
             styling.borderColour,
+        'aria-label': 'File upload dropzone',
         ...disabledHandlers,
     }) as React.HTMLAttributes<HTMLDivElement>;
 
@@ -322,6 +334,7 @@ const DropzoneDialogContent = ({
                         <Button
                             variant="outlined"
                             startIcon={<DriveFolderUploadIcon />}
+                            disabled={progress !== null}
                             onClick={openFileDialog}
                         >
                             Select from computer

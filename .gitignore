@@ -135,7 +135,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-.prince2-license
+.prince-license
 
 # Spyder project settings
 .spyderproject
@@ -182,6 +182,9 @@ private-media/
 
 # Media files for test suite run
 test-media/
+
+# E2E test artifacts on failure (screenshots, video etc.)
+test-results/
 
 # Sample data
 data/

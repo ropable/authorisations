@@ -54,11 +54,24 @@
           font: 8.5pt Arial, Helvetica, sans-serif;
           color: #2f2f2f;
         }
+
+        {% if is_draft %}
+        @prince-overlay {
+          content: "DRAFT";
+          color: rgba(80, 80, 80, 0.2);
+          font: bold 200px Arial, Helvetica, sans-serif;
+          text-align: center;
+          vertical-align: middle;
+          transform: rotate(-30deg);
+          white-space: nowrap;
+          line-height: 1;
+        }
+        {% endif %}
       }
 
       @page:first {
         @bottom-left {
-          content: "Form last updated at {{ application.questionnaire.updated_at|date:'F Y' }} (v{{ application.questionnaire.version }})";
+          content: "{% if is_draft %}Last modified: {{ application.updated_at|date:'j M Y, g:i A' }}{% else %}Submitted: {{ application.submitted_at|date:'j M Y, g:i A' }}{% endif %}";
         }
       }
 
@@ -79,6 +92,7 @@
 
       table {
         width: 100%;
+        table-layout: fixed;
         border-collapse: collapse;
         border-spacing: 0;
       }
@@ -113,6 +127,8 @@
       .section-table td {
         border: 1px solid #222;
         vertical-align: top;
+        overflow-wrap: break-word;
+        word-break: break-word;
       }
 
       .header-cell {
@@ -220,6 +236,8 @@
         padding: 9px 10px;
         font-size: 12px;
         line-height: 1.45;
+        overflow-wrap: break-word;
+        word-break: break-word;
       }
 
       .section-heading {
@@ -249,6 +267,8 @@
         padding: 6px 8px;
         font-size: 11px;
         vertical-align: top;
+        overflow-wrap: break-word;
+        word-break: break-word;
       }
 
       .grid-table th {
@@ -311,7 +331,8 @@
       .attachment-image-caption {
         margin: 6px 0 0;
         font-size: 11px;
-        color: #222;
+        color: #666;
+        text-align: center;
         word-break: break-word;
       }
 
@@ -345,6 +366,13 @@
         text-align: center;
       }
 
+      .attachment-file-size {
+        font-size: 10px;
+        color: #888;
+        text-align: center;
+        font-style: italic;
+      }
+
       .attachment-missing {
         color: #b71c1c;
       }
@@ -352,6 +380,65 @@
       .muted {
         color: #666;
         font-style: italic;
+      }
+
+      /* Metadata information page */
+      .metadata-page {
+        page-break-before: always;
+        page: metadata-page;
+      }
+
+      @page metadata-page {
+        @bottom-left {
+          content: "";
+        }
+      }
+
+      .metadata-page-header {
+        text-align: center;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.15px;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 3px solid #2d5a8c;
+        color: #2d5a8c;
+      }
+
+      .metadata-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .metadata-table td {
+        padding: 10px 12px;
+        font-size: 11px;
+        line-height: 1.4;
+        vertical-align: top;
+        overflow-wrap: break-word;
+        word-break: break-word;
+        border: 1px solid #999;
+      }
+
+      .metadata-section-header {
+        background: #2d5a8c;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 12px;
+        padding: 8px 12px;
+        letter-spacing: 0.5px;
+      }
+
+      .metadata-label {
+        background: #f0f0f0;
+        font-weight: 700;
+        color: #222;
+        width: 35%;
+      }
+
+      .metadata-value {
+        background: #ffffff;
+        color: #333;
       }
 
       /* File-type icons — inlined from backend/assets/pdf-icons.css */
@@ -450,7 +537,7 @@
                                 {% for file in question.image_files %}
                                   <li class="attachment-item">
                                     <img class="attachment-image" src="{{ file.file_src }}" alt="{{ file.name }}" />
-                                    <p class="attachment-image-caption">{{ file.name }}</p>
+                                    <p class="attachment-image-caption{% if file.is_missing %} attachment-missing{% endif %}">{{ file.name }} - {{ file.file_size }}</p>
                                   </li>
                                 {% endfor %}
                               </ul>
@@ -468,6 +555,7 @@
                                     <span class="attachment-file-name{% if file.is_missing %} attachment-missing{% endif %}">
                                       {{ file.name }}
                                     </span>
+                                    <span class="attachment-file-size">{{ file.file_size }}</span>
                                   </div>
                                 {% endfor %}
                               </div>
@@ -491,6 +579,72 @@
           </section>
         {% endfor %}
       {% endif %}
+
+      <!-- Application Metadata Information Page -->
+      <div class="metadata-page">
+        <div class="metadata-page-header">Application Information</div>
+        <table class="metadata-table">
+          <!-- Questionnaire Section -->
+          <tr>
+            <td class="metadata-section-header" colspan="2">QUESTIONNAIRE DETAILS</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Authorisation process</td>
+            <td class="metadata-value">{{ application.questionnaire.process.name }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Questionnaire name</td>
+            <td class="metadata-value">{{ application.questionnaire.name }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Questionnaire version</td>
+            <td class="metadata-value">{{ application.questionnaire.version }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Questionnaire last modified on</td>
+            <td class="metadata-value">{{ application.questionnaire.updated_at|date:'j F Y, g:i A' }}</td>
+          </tr>
+
+          <!-- Application Section -->
+          <tr>
+            <td class="metadata-section-header" colspan="2">APPLICATION DETAILS</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Application ID</td>
+            <td class="metadata-value">#{{ application.internal_id }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Application key</td>
+            <td class="metadata-value">{{ application.key }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Current status</td>
+            <td class="metadata-value">{{ application.get_status_display }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Applicant full name</td>
+            <td class="metadata-value">{{ application.owner.first_name }} {{ application.owner.last_name }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Applicant email</td>
+            <td class="metadata-value">{{ application.owner.email }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Created on</td>
+            <td class="metadata-value">{{ application.created_at|date:'j F Y, g:i A' }}</td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Last modified on</td>
+            <td class="metadata-value">{{ application.updated_at|date:'j F Y, g:i A' }}</td>
+          </tr>
+          {% if application.submitted_at %}
+          <tr>
+            <td class="metadata-label">Formally submitted on</td>
+            <td class="metadata-value">{{ application.submitted_at|date:'j F Y, g:i A' }}</td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
     </main>
   </body>
 </html>

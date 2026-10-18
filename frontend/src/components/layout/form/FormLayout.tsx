@@ -18,8 +18,9 @@ import type { AxiosError } from 'axios';
 import type { ControllerRenderProps, FieldErrors, FieldValues, SubmitErrorHandler, SubmitHandler, UseFormProps } from 'react-hook-form';
 import { FormProvider, useForm, useFormState } from 'react-hook-form';
 import { useLoaderData } from 'react-router';
+import { ApplicationIdDisplay } from '../../Common';
+import { openDrawerOffsetMixin } from '../StyledDrawer';
 import { ApiManager } from '../../../context/ApiManager';
-import { DRAWER_WIDTH } from '../../../context/Constants';
 import { useSnackbar } from '../../../context/Hooks';
 import { LocalStorage } from '../../../context/LocalStorage';
 import type { IApplicationAttachment, IApplicationData, IFormAnswers, IFormDocument } from '../../../context/types/Application';
@@ -154,7 +155,7 @@ export const FormLayout = () => {
      * @example Go to next step on successful validation: `onSubmit={handleSubmit((prev) => prev + 1)}`
      */
     const handleSubmit = (nextStep: React.SetStateAction<number>,): AsyncVoidAction => {
-        const onValid: SubmitHandler<IFormAnswers> = async (_: IFormAnswers) => {
+        const onValid: SubmitHandler<IFormAnswers> = async (_: IFormAnswers): Promise<void> => {
             // Calculate the next state for validated steps
             const newValidatedSteps = { ...validatedSteps };
             // Watch out for the review step, which is outside the range of steps array
@@ -172,7 +173,7 @@ export const FormLayout = () => {
             setActiveStep(nextStep);
         }
 
-        const onInvalid: SubmitErrorHandler<IFormAnswers> = async (errors: FieldErrors<IFormAnswers>) => {
+        const onInvalid: SubmitErrorHandler<IFormAnswers> = async (errors: FieldErrors<IFormAnswers>): Promise<void> => {
             // Set the current step as failed
             setValidSteps((completed) => ({
                 ...completed,
@@ -203,16 +204,17 @@ export const FormLayout = () => {
             }
         }
 
-        return formMethods.handleSubmit(onValid, onInvalid);
+        return formMethods.handleSubmit(onValid, onInvalid) as AsyncVoidAction;
     }
 
     // Change page title
     React.useEffect(() => {
-        document.title = `${app.questionnaire_name} : DBCA Authorisations`;
-    }, [app.questionnaire_name]);
+        document.title = `${questionnaire.process_name} / ${app.questionnaire_name} : DBCA Authorisations`;
+    }, [questionnaire.process_name, app.questionnaire_name]);
 
-    // Guard against StrictMode double-invocation: only show the notice once per mount.
-    const privacyNoticeShown = React.useRef(false);
+    // Guard against StrictMode double-invocation: only show the notice once per mount
+    // for the editable applications.
+    const privacyNoticeShown = React.useRef(!userCanEdit);
 
     // Notify once on mount that personal information is being collected.
     React.useEffect(() => {
@@ -220,10 +222,10 @@ export const FormLayout = () => {
         privacyNoticeShown.current = true;
         showSnackbar(
             <>
-                DBCA will collect, use and disclose your personal information in <br />
-                accordance with applicable privacy laws and DBCA's{" "}
+                Your personal information is collected, used and disclosed in <br />
+                accordance with applicable privacy laws and our{" "}
                 <Link href="/privacy" target="_blank" rel="noopener" color="inherit" underline="always">
-                    Privacy Policy
+                    Privacy Statement
                 </Link>.
             </>,
             "info",
@@ -264,9 +266,14 @@ export const FormLayout = () => {
                     >
                         <MenuIcon />
                     </IconButton>
-                    <Typography variant="h6" noWrap component="div">
-                        {app.questionnaire_name}
-                    </Typography>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        <Typography variant="h6" noWrap component="div" sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                            {questionnaire.process_name}
+                            <Typography variant="h6" sx={{ opacity: 0.5 }}>/</Typography>
+                            {app.questionnaire_name}
+                        </Typography>
+                        <ApplicationIdDisplay internalId={app.internal_id} variant="caption" />
+                    </Box>
                     <AccountMenu
                         isDirty={isDirty}
                         saveAnswers={saveAnswers}
@@ -320,8 +327,7 @@ const AppBar = styled(MuiAppBar, {
         {
             props: ({ open }) => open,
             style: {
-                marginLeft: DRAWER_WIDTH,
-                width: `calc(100% - ${DRAWER_WIDTH}px)`,
+                ...openDrawerOffsetMixin(theme),
                 transition: theme.transitions.create(['width', 'margin'], {
                     easing: theme.transitions.easing.sharp,
                     duration: theme.transitions.duration.enteringScreen,
@@ -352,10 +358,7 @@ const AccountMenu = ({
             <Button
                 color="inherit"
                 startIcon={<ExitToAppIcon />}
-                onClick={() => {
-                    // Assuming we're in a popup window
-                    window.close();
-                }}
+                onClick={window.close}
             >Exit</Button>
         </Box>
     )

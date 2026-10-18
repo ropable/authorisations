@@ -1,0 +1,134 @@
+import type { PrimitiveType } from "./Generic";
+
+/**
+ * Application status enum
+ */
+export type ApplicationStatus =
+    | "DRAFT"
+    | "DISCARDED"
+    | "WITHDRAWN"
+    | "SUBMITTED"
+    | "UNDER_REVIEW"
+    | "UNDER_ASSESSMENT"
+    | "APPROVED"
+    | "APPROVED_WITH_CONDITIONS"
+    | "DEFERRED"
+    | "REJECTED";
+
+
+/**
+ * Active statuses: applications currently being worked on or under review.
+ * These applications can still be modified or reviewed by relevant parties.
+ */
+export const activeStatuses: ApplicationStatus[] = [
+    "DRAFT",
+    "SUBMITTED",
+    "UNDER_REVIEW",
+    "UNDER_ASSESSMENT",
+];
+
+/**
+ * Terminated statuses: applications terminated before reaching a final decision.
+ * Terminated applications include those discarded by applicants (DISCARDED)
+ * or withdrawn by applicants after submission (WITHDRAWN).
+ */
+export const terminatedStatuses: ApplicationStatus[] = [
+    "DISCARDED",
+    "WITHDRAWN",
+];
+
+/**
+ * Finalised statuses: applications that have reached a final decision state.
+ * These include applications approved, rejected, approved with conditions, or deferred.
+ * Once in a finalised state, an application cannot be modified further.
+ */
+export const finalisedStatuses: ApplicationStatus[] = [
+    "APPROVED",
+    "APPROVED_WITH_CONDITIONS",
+    "REJECTED",
+    "DEFERRED",
+];
+
+/**
+ * Interface for application data, which includes the answers and meta data
+ */
+export interface IApplicationData {
+    id: number;
+    key: string;
+    internal_id: string;
+    owner_email: string;
+    owner_fullname: string;
+    process_slug: string;
+    process_sort_order: number;
+    questionnaire_id: number;
+    questionnaire_code: string;
+    questionnaire_name: string;
+    questionnaire_version: number;
+    questionnaire_sort_order: number;
+    status: ApplicationStatus;
+    created_at: string;
+    updated_at: string;
+    submitted_at: string | null;
+    /** Present on single-record fetches only; omitted from list endpoints to reduce payload size. */
+    document?: IFormDocument;
+}
+
+/**
+ * Interface corresponding to a grid answer row, where each column is keyed by its label
+ */
+export interface IGridAnswerRow {
+    // Keyed by column label
+    [key: string]: PrimitiveType;
+}
+
+/**
+ * Interface for an answer, which can be either:
+ *  - A primitive type (string, number, boolean or null)
+ *  - An array of grid answer rows
+ *  - List of UUIDs for file attachments
+ */
+export type IAnswer = PrimitiveType | IGridAnswerRow[] | string[];
+
+/**
+ * The form state for each step, keyed by step index.
+ * `document.steps` is converted into this structure for easer access.
+ */
+export interface IFormAnswers {
+    [stepIndex: number]: {
+        [qKey: string]: IAnswer;
+    };
+}
+
+/**
+ * Interface for the state of each step in the application form
+ */
+export interface IStepState {
+    is_valid: boolean | null;
+    answers: {
+        [qKey: string]: IAnswer;
+    };
+}
+
+/**
+ * Interface for an application form document in JSON Schema structure.
+ * This is essentially the current state of the form.
+ */
+export interface IFormDocument {
+    schema_version: string;
+    active_step: number;
+    steps: IStepState[];
+}
+
+
+/**
+ * Interface for application attachment metadata
+ */
+export interface IApplicationAttachment {
+    key: string;
+    application_key: string;
+    question: string;
+    name: string;
+    size: number;
+    created_at: string;
+    download_url: string;
+}

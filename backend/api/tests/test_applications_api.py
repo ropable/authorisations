@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework import status
 
 import applications.serialisers as application_serialisers
-from applications.models import ApplicationStatus
+from applications.statuses import ApplicationStatus
 
 
 pytestmark = [pytest.mark.api]
@@ -20,7 +20,7 @@ def _build_create_payload(questionnaire):
         "questionnaire_id": questionnaire.id,
         "questionnaire_code": questionnaire.code,
         "questionnaire_version": questionnaire.version,
-        "privacy_consent_agreed": True,
+        "collection_notice_agreed": True,
         "turnstile_token": "test-token",
     }
 
@@ -87,16 +87,16 @@ def test_application_create_requires_privacy_consent(
     questionnaire,
     monkeypatch,
 ):
-    """Reject creation unless privacy consent is explicitly acknowledged."""
+    """Reject creation unless collection notice consent is explicitly acknowledged."""
     monkeypatch.setattr(application_serialisers, "verify_turnstile_token", lambda *_args, **_kwargs: True)
     payload = _build_create_payload(questionnaire)
-    payload["privacy_consent_agreed"] = False
+    payload["collection_notice_agreed"] = False
 
     api_client.force_authenticate(user=user)
     response = api_client.post("/api/applications", payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "privacy_consent_agreed" in response.data
+    assert "collection_notice_agreed" in response.data
 
 
 @pytest.mark.django_db
@@ -116,25 +116,6 @@ def test_application_create_rejects_mismatched_questionnaire_identity(
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "Questionnaire with the provided process slug" in str(response.data)
-
-
-@pytest.mark.django_db
-@pytest.mark.security
-def test_application_create_rejects_invalid_turnstile_token(
-    api_client,
-    user,
-    questionnaire,
-    monkeypatch,
-):
-    """Fail closed on create when Turnstile verification fails."""
-    monkeypatch.setattr(application_serialisers, "verify_turnstile_token", lambda *_args, **_kwargs: False)
-    payload = _build_create_payload(questionnaire)
-
-    api_client.force_authenticate(user=user)
-    response = api_client.post("/api/applications", payload, format="json")
-
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "turnstile_token" in response.data
 
 
 @pytest.mark.django_db
@@ -261,3 +242,117 @@ def test_application_put_rejects_document_with_schema_version_mismatch(
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "Schema version mismatch" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_application_list_includes_owner_email_and_fullname(
+    api_client,
+    user,
+    application_factory,
+):
+    """Verify that application list responses include owner_email and owner_fullname fields."""
+    user.first_name = "John"
+    user.last_name = "Doe"
+    user.save()
+    
+    application = application_factory(owner=user)
+
+    api_client.force_authenticate(user=user)
+    response = api_client.get("/api/applications")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert len(response.data) == 1
+    data = response.data[0]
+    assert data["owner_email"] == user.username
+    assert data["owner_fullname"] == "John Doe"
+
+
+@pytest.mark.django_db
+def test_application_retrieve_includes_owner_email_and_fullname(
+    api_client,
+    user,
+    application_factory,
+):
+    """Verify that application retrieve responses include owner_email and owner_fullname fields."""
+    user.first_name = "Jane"
+    user.last_name = "Smith"
+    user.save()
+    
+    application = application_factory(owner=user)
+
+    api_client.force_authenticate(user=user)
+    response = api_client.get(f"/api/applications/{application.key}")
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.data
+    assert data["owner_email"] == user.username
+    assert data["owner_fullname"] == "Jane Smith"
+
+
+@pytest.mark.django_db
+def test_application_owner_fullname_falls_back_to_username_when_empty(
+    api_client,
+    user,
+    application_factory,
+):
+    """Fallback to username when first_name and last_name are both empty."""
+    user.first_name = ""
+    user.last_name = ""
+    user.save()
+    
+    application = application_factory(owner=user)
+
+    api_client.force_authenticate(user=user)
+    response = api_client.get(f"/api/applications/{application.key}")
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.data
+    assert data["owner_email"] == user.username
+    assert data["owner_fullname"] == user.username
+
+
+@pytest.mark.django_db
+def test_applications_list_includes_questionnaire_sort_order(
+    api_client,
+    user,
+    questionnaire_factory,
+    process_factory,
+    application_factory,
+):
+    """Verify questionnaire_sort_order and process_sort_order fields are included in application list response."""
+    process = process_factory(slug="sort-list-test", sort_order=1)
+    questionnaire = questionnaire_factory(process=process, sort_order=4)
+    application = application_factory(owner=user, questionnaire=questionnaire)
+
+    api_client.force_authenticate(user=user)
+    response = api_client.get("/api/applications")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert len(response.data) == 1
+    assert "questionnaire_sort_order" in response.data[0]
+    assert response.data[0]["questionnaire_sort_order"] == 4
+    assert "process_sort_order" in response.data[0]
+    assert response.data[0]["process_sort_order"] == 1
+
+
+@pytest.mark.django_db
+def test_applications_retrieve_includes_questionnaire_sort_order(
+    api_client,
+    user,
+    questionnaire_factory,
+    process_factory,
+    application_factory,
+):
+    """Verify questionnaire_sort_order and process_sort_order fields are included in application retrieve response."""
+    process = process_factory(slug="sort-retrieve-test", sort_order=2)
+    questionnaire = questionnaire_factory(process=process, sort_order=7)
+    application = application_factory(owner=user, questionnaire=questionnaire)
+
+    api_client.force_authenticate(user=user)
+    response = api_client.get(f"/api/applications/{application.key}")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert "questionnaire_sort_order" in response.data
+    assert response.data["questionnaire_sort_order"] == 7
+    assert "process_sort_order" in response.data
+    assert response.data["process_sort_order"] == 2

@@ -48,6 +48,7 @@ const makeAttachment = (overrides: Partial<IApplicationAttachment> = {}): IAppli
   application_key: "app-key-1",
   question: "0-0",
   name: "report.pdf",
+  size: 2048,
   created_at: "2026-01-01T00:00:00Z",
   download_url: "/d/app-key-1/att-1",
   ...overrides,
@@ -85,7 +86,7 @@ describe("FileAttachmentList", () => {
 
     fireEvent.click(screen.getByTitle("Delete: report.pdf"));
 
-    expect(showDialogMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Confirm Deletion" }));
+    expect(showDialogMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Confirm deletion" }));
     const dialogOptions = showDialogMock.mock.calls[0][0];
 
     render(<>{dialogOptions.actions}</>);
@@ -134,7 +135,7 @@ describe("FileAttachmentList", () => {
 
     fireEvent.click(screen.getByTitle("Rename: report-v1.pdf"));
 
-    expect(showDialogMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Rename Attachment" }));
+    expect(showDialogMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Rename attachment" }));
     const dialogOptions = showDialogMock.mock.calls[0][0];
 
     render(<>{dialogOptions.content}</>);
@@ -148,5 +149,31 @@ describe("FileAttachmentList", () => {
       expect(showSnackbarMock).toHaveBeenCalledWith("File has been renamed", "success");
       expect(hideDialogMock).toHaveBeenCalled();
     });
+  });
+
+  it("displays file size when size is greater than zero", () => {
+    const attachment = makeAttachment({ size: 2048 });
+
+    render(<FileAttachmentList attachments={[attachment]} canEdit={false} />);
+
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+    expect(screen.getByText("2 KB")).toBeInTheDocument();
+  });
+
+  it("does not display file size when size is zero", () => {
+    const attachment = makeAttachment({ size: 0 });
+
+    render(<FileAttachmentList attachments={[attachment]} canEdit={false} />);
+
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("0 B")).not.toBeInTheDocument();
+  });
+
+  it("displays file size with proper formatting for large files", () => {
+    const attachment = makeAttachment({ size: 1048576 }); // 1 MB
+
+    render(<FileAttachmentList attachments={[attachment]} canEdit={false} />);
+
+    expect(screen.getByText("1 MB")).toBeInTheDocument();
   });
 });

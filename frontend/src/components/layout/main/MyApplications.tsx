@@ -1,76 +1,66 @@
-import SortIcon from '@mui/icons-material/Sort';
 import Box from "@mui/material/Box";
-import FormControl from "@mui/material/FormControl";
 import List from "@mui/material/List";
-import MenuItem from "@mui/material/MenuItem";
-import Select from "@mui/material/Select";
+import Tab from "@mui/material/Tab";
+import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
 
 import { useEffect, useMemo, useState } from "react";
 import { useLoaderData } from "react-router";
 import { useResolvedPromise } from "../../../context/Hooks";
 import { LocalStorage } from "../../../context/LocalStorage";
-import type { ApplicationStatus, IApplicationData } from "../../../context/types/Application";
+import type { IApplicationData } from "../../../context/types/Application";
+import {
+    activeStatuses,
+    finalisedStatuses,
+    terminatedStatuses,
+} from '../../../context/types/Application';
 import type { LoaderData } from '../../../context/types/Generic';
 import { ApplicationCard } from "./ApplicationCard";
 import { EmptyStateComponent } from "./EmptyState";
-
-const sortOrderOptions = [
-    "authorisation",
-    "newest",
-    "oldest",
-    "recently_updated",
-    "least_recently_updated",
-] as const;
-
-type SortOrderOption = typeof sortOrderOptions[number];
+import { LoadingState } from "./LoadingState";
+import {
+    ApplicationSortControl,
+    getAvailableSortOptions,
+    getInitialSortOrder,
+    sortApplications,
+    type SortOrderOption,
+} from './applicationUtils';
 
 const myApplicationsSortOrderStorageKey = "my-applications-sort-order";
-const defaultSortOrder: SortOrderOption = "newest";
-
-const isSortOrderOption = (value: string): value is SortOrderOption => {
-    return sortOrderOptions.includes(value as SortOrderOption);
-};
-
-const getInitialSortOrder = (): SortOrderOption => {
-    const storedValue = LocalStorage.getValue<string>(myApplicationsSortOrderStorageKey);
-    if (storedValue && isSortOrderOption(storedValue)) {
-        return storedValue;
-    }
-
-    return defaultSortOrder;
-};
-
-const sortOrderLabels: Record<SortOrderOption, string> = {
-    authorisation: "Authorisation",
-    newest: "Newest",
-    oldest: "Oldest",
-    recently_updated: "Recently updated",
-    least_recently_updated: "Least recently updated",
-};
-
-/** Statuses that the download link should be visible. */
-const downloadableStatuses = new Set<ApplicationStatus>([
-    "SUBMITTED",
-    "UNDER_REVIEW",
-    "UNDER_ASSESSMENT",
-    "APPROVED",
-    "APPROVED_WITH_CONDITIONS",
-    "DEFERRED",
-    "REJECTED"
-]);
-
 
 export const MyApplications = () => {
     const { processes, applications: applicationsPromise } = useLoaderData<LoaderData>();
-    const [applications, isApplicationsLoading] = useResolvedPromise<IApplicationData[]>(applicationsPromise, []);
+    const [resolvedApplications, isApplicationsLoading] = useResolvedPromise<IApplicationData[]>(applicationsPromise, []);
+    const [applicationUpdates, setApplicationUpdates] = useState<Record<string, IApplicationData>>({});
+    const [selectedTab, setSelectedTab] = useState<number>(0);
 
-    // Default to newest and restore the user's last selected sort when available.
-    const [sortOrder, setSortOrder] = useState<SortOrderOption>(getInitialSortOrder);
+    /**
+     * Computes the merged applications list by overlaying any updates on the resolved applications.
+     * This preserves the loading state while allowing real-time status changes to be reflected.
+     */
+    const applications = useMemo(
+        () => resolvedApplications.map((app) => applicationUpdates[app.key] ?? app),
+        [resolvedApplications, applicationUpdates],
+    );
+
+    const [sortOrder, setSortOrder] = useState<SortOrderOption>(() =>
+        getInitialSortOrder(myApplicationsSortOrderStorageKey, "updated_newest")
+    );
 
     useEffect(() => {
         LocalStorage.setValue<SortOrderOption>(myApplicationsSortOrderStorageKey, sortOrder);
     }, [sortOrder]);
+
+    /**
+     * Handles status changes from individual ApplicationCard components.
+     * Records the update so re-categorisation and animations occur on the next render.
+     */
+    const handleApplicationStatusChanged = (updatedApp: IApplicationData) => {
+        setApplicationUpdates((prev) => ({
+            ...prev,
+            [updatedApp.key]: updatedApp,
+        }));
+    };
 
     const processBySlug = useMemo(
         () => new Map(processes.map((process) => [process.slug, process])),
@@ -80,113 +70,90 @@ export const MyApplications = () => {
     // Remove `applications` content for empty state testing
     // applications.length = 0;
 
-    const sortedApplications = useMemo(() => {
-        const sorted = [...applications];
+    const sortedApplications = useMemo(
+        () => sortApplications(applications, sortOrder),
+        [applications, sortOrder]
+    );
 
-        if (sortOrder === "authorisation") {
-            // Group by process display order, then by slug for stable ordering.
-            sorted.sort((a, b) => {
-                const processA = processBySlug.get(a.process_slug);
-                const processB = processBySlug.get(b.process_slug);
-                const processOrderA = processA?.sort_order ?? Number.MAX_SAFE_INTEGER;
-                const processOrderB = processB?.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const categorisedApplications = useMemo(() => ({
+        active: sortedApplications.filter((app) => activeStatuses.includes(app.status)),
+        terminated: sortedApplications.filter((app) => terminatedStatuses.includes(app.status)),
+        finalised: sortedApplications.filter((app) => finalisedStatuses.includes(app.status)),
+    }), [sortedApplications]);
 
-                // If the two applications belong to processes with different display orders,
-                // use that configured process ordering first.
-                if (processOrderA !== processOrderB) {
-                    return processOrderA - processOrderB;
-                }
+    const applicationsForTab = [
+        categorisedApplications.active,
+        categorisedApplications.terminated,
+        categorisedApplications.finalised,
+    ][selectedTab] || [];
 
-                // When both processes resolve to the same sort order, fall back to slug text
-                // so the result stays deterministic and does not jump around between renders.
-                return a.process_slug.localeCompare(b.process_slug);
-            });
-            return sorted;
-        }
-
-        if (sortOrder === "newest") {
-            // Show the most recently created applications first.
-            sorted.sort(
-                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-            );
-            return sorted;
-        }
-
-        if (sortOrder === "oldest") {
-            // Show the earliest created applications first.
-            sorted.sort(
-                (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-            );
-            return sorted;
-        }
-
-        if (sortOrder === "recently_updated") {
-            // Prioritise applications with the latest activity.
-            sorted.sort(
-                (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-            );
-            return sorted;
-        }
-
-        // Surface applications with the oldest updates first.
-        sorted.sort(
-            (a, b) => new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-        );
-        return sorted;
-    }, [applications, processBySlug, sortOrder]);
+    const tabDescriptions = [
+        "View and manage your draft and submitted applications.",
+        "View applications that have been discarded or withdrawn.",
+        "View applications that have been approved, rejected, or deferred.",
+    ];
 
     return (
-        <Box className="p-8 min-w-4xl max-w-7xl">
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+        <Box className="p-8 w-full min-w-2xl lg:w-3xl xl:w-4xl">
+            <Box className="flex justify-between items-center">
                 <Typography variant="h4" gutterBottom>
                     My Applications
                 </Typography>
-                {!isApplicationsLoading && applications.length > 0 &&
-                    <FormControl size="small">
-                        <Select
-                            id="my-applications-sort"
-                            value={sortOrder}
-                            className="min-w-55"
-                            displayEmpty
-                            onChange={(event) => setSortOrder(event.target.value as SortOrderOption)}
-                            inputProps={{ 'aria-label': 'Sort applications' }}
-                            renderValue={(selected) => {
-                                const option = selected as SortOrderOption;
-
-                                return (
-                                    <Box
-                                        component="span"
-                                        sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}
-                                    >
-                                        <SortIcon fontSize="small" />
-                                        <Box component="span">{sortOrderLabels[option]}</Box>
-                                    </Box>
-                                );
-                            }}
-                        >
-                            {sortOrderOptions.map((option) => (
-                                <MenuItem key={option} value={option}>
-                                    {sortOrderLabels[option]}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
+                {!isApplicationsLoading && applications.length > 1 &&
+                    <ApplicationSortControl
+                        value={sortOrder}
+                        onChange={setSortOrder}
+                        controlId="my-applications-sort"
+                        availableOptions={getAvailableSortOptions(applications)}
+                    />
                 }
             </Box>
-            <p>Here you can view and manage your applications.</p>
+            <Box className="border-b border-gray-300 mb-4">
+                <Tabs 
+                    variant="fullWidth" 
+                    value={selectedTab} 
+                    onChange={(_, newValue) => setSelectedTab(newValue)}
+                    aria-label="Application status filter"
+                    role="tablist"
+                >
+                    <Tab 
+                        label={`Active (${categorisedApplications.active.length})`} 
+                        aria-label={`Active applications, ${categorisedApplications.active.length} total`}
+                        id="tab-active"
+                        aria-controls="tabpanel-active"
+                        disabled={categorisedApplications.active.length === 0}
+                    />
+                    <Tab 
+                        label={`Terminated (${categorisedApplications.terminated.length})`} 
+                        aria-label={`Terminated applications, ${categorisedApplications.terminated.length} total`}
+                        id="tab-terminated"
+                        aria-controls="tabpanel-terminated"
+                        disabled={categorisedApplications.terminated.length === 0}
+                    />
+                    <Tab 
+                        label={`Finalised (${categorisedApplications.finalised.length})`} 
+                        aria-label={`Finalised applications, ${categorisedApplications.finalised.length} total`}
+                        id="tab-finalised"
+                        aria-controls="tabpanel-finalised"
+                        disabled={categorisedApplications.finalised.length === 0}
+                    />
+                </Tabs>
+            </Box>
 
-            {isApplicationsLoading ? <Typography>Loading applications...</Typography> :
-                applications.length === 0 ? <EmptyStateComponent /> :
+            <Typography color="textSecondary" className="mb-3!">
+                {tabDescriptions[selectedTab]}
+            </Typography>
+
+            {isApplicationsLoading ? <LoadingState /> :
+                applicationsForTab.length === 0 ? <EmptyStateComponent /> :
                     <List>
-                        {sortedApplications.map((a) => {
-                            const process = processBySlug.get(a.process_slug);
-                            const downloadUrl = downloadableStatuses.has(a.status) ? `/d/${a.key}` : undefined;
+                        {applicationsForTab.map((a) => {
+                            const process = processBySlug.get(a.process_slug)!;
                             return <ApplicationCard
                                 key={a.key}
                                 application={a}
                                 process={process}
-                                downloadUrl={downloadUrl}
-                                displayContinue={true}
+                                onStatusChanged={handleApplicationStatusChanged}
                             />;
                         })}
                     </List>

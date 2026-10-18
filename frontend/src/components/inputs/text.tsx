@@ -1,10 +1,13 @@
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import FormHelperText from "@mui/material/FormHelperText";
 import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 
 import { Controller } from "react-hook-form";
 import { ERROR_MSG } from "../../context/Constants";
 import { Question } from "../../context/types/Questionnaire";
+import { HintButton } from "../Common";
 
 
 export function TextInput({
@@ -33,35 +36,39 @@ export function TextInput({
         }}
         render={({ field, fieldState }) => (
             <Box className="w-full">
+                <Typography variant="h6" component="label" htmlFor={"field-" + question.key}>
+                    {question.labelText}
+                    {question.o.config?.hint && <HintButton hint={question.o.config.hint} />}
+                </Typography>
                 <TextField
                     {...field}
-
+                    id={"field-" + question.key}
                     type={question.o.type === "number" ? "number" : "text"}
-                    label={question.labelText}
-                    helperText={fieldState.invalid
-                        ? fieldState.error?.message : question.o.description}
                     error={fieldState.invalid}
                     variant="outlined"
-                    className="w-full"
-
+                    fullWidth
                     // Trim the value on blur for a better user experience.
                     // This allows users to type spaces between words and cleans up the
                     // value only when they are done editing.
                     onBlur={() => {
-                        field.onBlur(); // First, call the original onBlur from react-hook-form
+                        field.onBlur();
                         if (typeof field.value === "string") {
-                            field.onChange(field.value.trim()); // Then, update the value with the trimmed version
+                            field.onChange(field.value.trim());
                         }
                     }}
-
                     // Spread the conditional props here
                     {...textAreaProps}
                 />
-                {fieldState.invalid && question.o.description && (
+                {fieldState.invalid &&
+                    <Alert severity="error" sx={{ mt: 1 }}>
+                        {fieldState.error?.message}
+                    </Alert>
+                }
+                {question.o.description &&
                     <FormHelperText>
                         {question.o.description}
                     </FormHelperText>
-                )}
+                }
             </Box>
         )}
     />

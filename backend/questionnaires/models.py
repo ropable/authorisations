@@ -4,7 +4,7 @@ from processes.models import AuthorisationProcess
 from rest_framework import serializers
 
 from .bugfix import DocumentJSONField
-from .schema import get_questionnaire_schema
+from .schema import SCHEMA_VERSION, get_questionnaire_schema
 
 
 class Questionnaire(models.Model):
@@ -102,10 +102,17 @@ class QuestionnaireSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerial
         read_only=True,
     )
 
+    process_name = serializers.CharField(
+        source="process.name",
+        required=False,
+        read_only=True,
+    )
+
     class Meta:
         model = Questionnaire
         fields = (
             "process_slug",
+            "process_name",
             "id",
             "code",
             "name",
@@ -120,7 +127,14 @@ class QuestionnaireSerialiser(JsonSchemaSerialiserMixin, serializers.ModelSerial
         read_only_fields = fields
 
     def validate_document(self, value):
-        schema = get_questionnaire_schema()
+        doc_version = value.get("schema_version") if isinstance(value, dict) else None
+
+        if doc_version != SCHEMA_VERSION:
+            raise serializers.ValidationError(
+                f"Document schema version must be '{SCHEMA_VERSION}', but got '{doc_version}'. "
+                f"Run migration: python manage.py schema_migrate_questionnaire {SCHEMA_VERSION}"
+            )
 
         # Validate and return with the JSON schema
+        schema = get_questionnaire_schema()
         return self._validate_document(value, schema)

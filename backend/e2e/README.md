@@ -11,6 +11,24 @@ poetry install --with dev
 poetry run playwright install chromium
 ```
 
+### Build frontend assets for browser tests
+
+When running Playwright tests that open a real browser, the SPA static assets
+must be available to Django so the pages render correctly. Build the frontend
+and collect static files into `STATIC_ROOT` before running browser tests:
+
+```bash
+cd frontend
+npm ci
+npm run build
+
+cd ../backend
+poetry run python manage.py collectstatic --noinput
+
+# then run E2E (chromium example)
+poetry run pytest e2e/tests -v --browser chromium
+```
+
 ## Run E2E Tests
 
 ```bash
@@ -32,8 +50,8 @@ Pytest uses `config.test_settings` (from `pyproject.toml`), while a normal
 | E2E-02 | SPA shell route availability | Applicant | `GET /my-applications`, `GET /new-application` | Returns `200` and renders SPA root container. |
 | E2E-03 | Resume owner-only guard | Applicant/Reviewer | `GET /a/:key` | Owner gets `200`; reviewer gets `404`. |
 | E2E-04 | Attachment read boundary | Applicant/Other Applicant | `GET /d/:appKey/:attachmentKey` | Owner can download; non-owner gets `404`. |
-| E2E-05 | Assessment queue role scope | Reviewer/Applicant | `GET /api/assessment` | Reviewer sees queue item; applicant sees empty list. |
-| E2E-06 | Assessment status transition | Reviewer | `PATCH /api/assessment/:key` | Valid reviewer update persists status change. |
+| E2E-05 | Review queue role scope | Reviewer/Applicant | `GET /api/review` | Reviewer sees queue item; applicant sees empty list. |
+| E2E-06 | Review status transition | Reviewer | `PATCH /api/review/:key` | Valid reviewer update persists status change. |
 | E2E-07 | Questionnaire latest selection | Anonymous | `GET /api/questionnaires` | Returns latest per `(process, code)` only. |
 | E2E-08 | Application list owner scope | Applicant | `GET /api/applications` | Returns only caller-owned applications. |
 | E2E-09 | Attachment filter validation | Applicant | `GET /api/attachments?application_key=...` | Invalid UUID returns `400`. |

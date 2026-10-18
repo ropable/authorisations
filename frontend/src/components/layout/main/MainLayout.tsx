@@ -3,7 +3,6 @@ import BottomNavigation from '@mui/material/BottomNavigation';
 import BottomNavigationAction from '@mui/material/BottomNavigationAction';
 import Box from '@mui/material/Box';
 import CssBaseline from '@mui/material/CssBaseline';
-import Drawer from '@mui/material/Drawer';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
@@ -15,10 +14,12 @@ import Typography from '@mui/material/Typography';
 
 import { useEffect, useMemo } from 'react';
 import { useLoaderData, useNavigate, type NavigateFunction, type NavigateOptions } from 'react-router';
-import { DRAWER_WIDTH } from '../../../context/Constants';
+import { ConfigManager } from '../../../context/ConfigManager';
 import type { IRoute, LoaderData } from "../../../context/types/Generic";
 import type { IAuthorisationProcess } from '../../../context/types/Questionnaire';
 import { ROUTES } from '../../../router';
+import { Confetti } from '../../../context/Confetti';
+import { ResponsivePermanentDrawer } from '../StyledDrawer';
 
 
 export const MainLayout = ({
@@ -52,8 +53,8 @@ export const MainLayout = ({
             <CssBaseline />
             <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
                 <Toolbar>
-                    <Typography variant="h6" noWrap component="div">
-                        Authorisations Framework
+                    <Typography variant="h6" noWrap component="div" sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                        DBCA <Typography variant="h6" sx={{ opacity: 0.5 }}>/</Typography> Authorisations System
                     </Typography>
                 </Toolbar>
             </AppBar>
@@ -89,6 +90,7 @@ export const MainLayout = ({
                             value={footerRoute.external ? `external:${footerRoute.path}` : footerRoute.path}
                             sx={{
                                 minWidth: 'auto',
+                                textWrap: 'nowrap',
                                 px: 2,
                                 '& .MuiBottomNavigationAction-label': {
                                     display: 'none',
@@ -115,6 +117,7 @@ const Sidebar = ({
     const currentPath = window.location.pathname;
     const navOptions: NavigateOptions = { viewTransition: true };
     const navigate: NavigateFunction = useNavigate();
+    const appVersion = ConfigManager.get().app_version;
 
     const visibleRoutes = useMemo(
         () => ROUTES.filter((route) => route.sidebar !== false && (!route.condition || route.condition(processes))),
@@ -122,16 +125,16 @@ const Sidebar = ({
     );
 
     return (
-        <Drawer
+        <ResponsivePermanentDrawer
             variant="permanent"
             sx={{
-                width: DRAWER_WIDTH,
-                flexShrink: 0,
-                [`& .MuiDrawer-paper`]: { width: DRAWER_WIDTH, boxSizing: 'border-box' },
+                [`& .MuiDrawer-paper`]: {
+                    backgroundColor: 'transparent',
+                },
             }}
         >
             <Toolbar />
-            <Box sx={{ overflow: 'auto' }}>
+            <Box sx={{ overflow: 'auto', flexGrow: 1 }}>
                 <List>
                     {
                         visibleRoutes.map((route) => {
@@ -154,6 +157,7 @@ const Sidebar = ({
                     }
                 </List>
             </Box>
-        </Drawer>
+            <Confetti celebrate={10}>{appVersion}</Confetti>
+        </ResponsivePermanentDrawer>
     );
 }

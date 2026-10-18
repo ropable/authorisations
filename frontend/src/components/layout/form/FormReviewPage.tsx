@@ -14,10 +14,12 @@ import { useFormContext } from "react-hook-form";
 import { ApiManager } from '../../../context/ApiManager';
 import { useSnackbar } from '../../../context/Hooks';
 import { TurnstileManager } from '../../../context/TurnstileManager';
+import { fireConfettiEffect } from '../../../context/confettiEffect';
 import type { IAnswer, IApplicationAttachment, IFormAnswers, IGridAnswerRow } from "../../../context/types/Application";
 import type { AsyncVoidAction } from "../../../context/types/Generic";
 import { Question, type IFormSection, type IFormStep, type IGridQuestionColumn, type IQuestion, type IQuestionnaire } from "../../../context/types/Questionnaire";
 import { FileAttachmentList } from '../../Common';
+import { SubmissionModal } from './SubmissionModal';
 
 const getStepPrefix = (stepIndex: number) => `${stepIndex + 1}.`;
 const getSectionPrefix = (sectionIndex: number) => `${String.fromCharCode(65 + sectionIndex)})`;
@@ -45,6 +47,8 @@ export function FormReviewPage({
     const [turnstileLoading, setTurnstileLoading] = React.useState<boolean>(userCanEdit);
     const [turnstileError, setTurnstileError] = React.useState<string | null>(null);
     const [turnstileToken, setTurnstileToken] = React.useState<string | null>(null);
+    const [submitInProgress, setSubmitInProgress] = React.useState<boolean>(false);
+    const [submissionModalOpen, setSubmissionModalOpen] = React.useState<boolean>(!userCanEdit);
     const hasInitializedRef = React.useRef<boolean>(false);
     const turnstileContainerRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -108,22 +112,35 @@ export function FormReviewPage({
 
     const isTurnstileVerified = !userCanEdit || (!turnstileLoading && !turnstileError && !!turnstileToken);
 
-    // Dummy submit handler for now
+    // Disable the submit button if any of the following conditions are true:
+    // - the user has not confirmed the accuracy of their answers,
+    // - the user cannot edit (read-only mode),
+    // - Turnstile verification has not been completed successfully,
+    // - or a submission is currently in progress.
+    const submitButtonDisabled = !hasConfirmed || !userCanEdit || !isTurnstileVerified || submitInProgress;
+
+    /**
+     * The final submission handler for the review page. It checks for Turnstile verification and submits the application via the API.
+     * Displays a success modal and triggers a confetti effect on successful submission.
+     * @returns {Promise<void>} A promise that resolves when the submission process is complete.
+     * @throws Will throw an error if the Turnstile verification fails or if the API submission fails.
+     */
     const onFinalSubmit = async () => {
         if (userCanEdit && !turnstileToken) {
             showSnackbar("Please complete verification before submitting.", "error");
             return;
         }
 
-        // alert("Submitted! (implement server-side integration here)");
+        // Disable the submit button to prevent multiple submissions
+        setSubmitInProgress(true);
+
         await ApiManager.submitApplication(applicationKey, turnstileToken || "")
-            // Successfully save to API    
             .then((resp) => {
-                showSnackbar("Application has been successfully submitted and is read-only now.", "success");
                 setUserCanEdit(false);
+                setSubmissionModalOpen(true);
+                fireConfettiEffect(5);
                 return resp;
             })
-            // Display the error message to user and log to console
             .catch((error: AxiosError) => {
                 console.error('API Error:', error);
                 const responseData = error.response?.data as {
@@ -133,14 +150,15 @@ export function FormReviewPage({
                 const message = responseData?.turnstile_token?.[0] ?? responseData?.status?.[0] ?? error.message;
                 showSnackbar(`Failed to submit: ${message}`, "error");
                 return null;
+            })
+            .finally(() => {
+                setSubmitInProgress(false);
             });
-
-        // if (!response) return;
     };
 
     return (
-        <div className="mx-auto min-w-3xl max-w-7xl bg-[#d1d5db] p-8 font-sans text-[#111]">
-            <p className="mb-2 text-3xl font-bold text-[#111]">
+        <div className="bg-gray-300 p-8 w-full min-w-3xl lg:w-3xl xl:w-4xl 2xl:w-6xl">
+            <p className="mb-2 text-3xl font-bold">
                 Review your answers
             </p>
             <p className="mb-8 leading-6 text-[#4b5563]">
@@ -153,15 +171,16 @@ export function FormReviewPage({
                             <h2 className="m-0 text-base font-bold text-white">
                                 {getStepPrefix(stepIdx)} {step.title}
                             </h2>
-                            <IconButton
-                                size="small"
-                                aria-label="edit step"
-                                onClick={handleSubmit(stepIdx)}
-                                disabled={!userCanEdit}
-                                className="text-white! disabled:text-gray-300!"
-                            >
-                                <EditIcon fontSize="small" />
-                            </IconButton>
+                            {userCanEdit &&
+                                <IconButton
+                                    size="small"
+                                    aria-label="edit step"
+                                    onClick={handleSubmit(stepIdx)}
+                                    className="text-white! disabled:text-gray-300!"
+                                >
+                                    <EditIcon fontSize="small" />
+                                </IconButton>
+                            }
                         </div>
 
                         <div className="space-y-3 p-3">
@@ -250,13 +269,21 @@ export function FormReviewPage({
                     variant="contained"
                     size="large"
                     color="success"
+                    loadingPosition="start"
                     onClick={onFinalSubmit}
-                    disabled={!hasConfirmed || !userCanEdit || !isTurnstileVerified}
+                    loading={submitInProgress}
+                    disabled={submitButtonDisabled}
                     startIcon={<AssignmentTurnedInRoundedIcon />}
                 >
                     Submit Application
                 </Button>
             </div>
+
+            <SubmissionModal
+                open={submissionModalOpen}
+                applicationKey={applicationKey}
+                onClose={() => setSubmissionModalOpen(false)}
+            />
         </div>
     );
 }
@@ -315,7 +342,7 @@ const displayGrid = (question: IQuestion, answer: IAnswer) => {
             <table className="w-full border border-[#444] border-collapse text-[11px]">
                 <thead>
                     <tr>
-                        {question.grid_columns?.map((col: IGridQuestionColumn, colIdx: number) => (
+                        {question.config?.grid_columns?.map((col: IGridQuestionColumn, colIdx: number) => (
                             <th key={colIdx} className="border border-[#777] bg-[#dbe4bf] px-2 py-1.5 text-left font-bold text-[#4f5f2f]">
                                 {col.label}
                             </th>
@@ -325,7 +352,7 @@ const displayGrid = (question: IQuestion, answer: IAnswer) => {
                 <tbody>
                     {answer.map((row: IGridAnswerRow, rowIdx: number) => (
                         <tr key={rowIdx}>
-                            {question.grid_columns?.map((col: IGridQuestionColumn, colIdx: number) => {
+                            {question.config?.grid_columns?.map((col: IGridQuestionColumn, colIdx: number) => {
                                 const cellValue = row[col.label];
                                 let displayValue: React.ReactNode;
 

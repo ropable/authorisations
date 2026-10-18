@@ -11,28 +11,30 @@ describe("SelectInput", () => {
     const question = makeQuestion({
       type: "select",
       label: "Select permit type",
-      select_options: ["Research", "Monitoring"],
+      config: { select_options: ["Research", "Monitoring"] },
     });
 
     renderWithForm({ ui: <SelectInput question={question} /> });
 
-    fireEvent.mouseDown(screen.getByLabelText("1. Select permit type"));
+    fireEvent.mouseDown(screen.getByRole("combobox"));
     expect(screen.getByRole("option", { name: "Research" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Monitoring" })).toBeInTheDocument();
   });
 
-  it("shows required error if nothing selected", async () => {
+  it("shows required error in Alert if nothing selected", async () => {
     const question = makeQuestion({
       type: "select",
       label: "Required select",
       is_required: true,
-      select_options: ["A", "B"],
+      config: { select_options: ["A", "B"] },
     });
 
     renderWithForm({ ui: <SelectInput question={question} /> });
 
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
-    expect(await screen.findByText(ERROR_MSG.required)).toBeInTheDocument();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toBeInTheDocument();
+    expect(alert).toHaveTextContent(ERROR_MSG.required);
   });
 });

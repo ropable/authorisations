@@ -4,6 +4,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import InfoIcon from '@mui/icons-material/Info';
 import SaveIcon from '@mui/icons-material/Save';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from "@mui/material/Button";
 import FormHelperText from '@mui/material/FormHelperText';
@@ -28,6 +29,7 @@ import { v6 as uuidv6 } from 'uuid';
 import { type PrimitiveType } from "../../context/types/Generic";
 import { Question } from "../../context/types/Questionnaire";
 import { assert } from '../../context/Utils';
+import { HintButton } from '../Common';
 
 // Declare custom props to pass to the footer component
 // See https://mui.com/x/api/data-grid/data-grid/#data-grid-prop-slotProps
@@ -47,11 +49,11 @@ const toGridRows = (value: GridRowsProp, question: Question): GridRowsProp => {
     if (!Array.isArray(value)) {
         return [];
     }
-    
+
     // Map over each row and convert date strings to Date objects
     return value.map((row) => {
         const newRow: Record<string, unknown> = { _id: uuidv6(), _isNew: false, ...row, };
-        question.o.grid_columns?.forEach((column) => {
+        question.o.config?.grid_columns?.forEach((column) => {
             if (column.type === "date") {
                 assert(
                     typeof newRow[column.label] === "string" || newRow[column.label] === null,
@@ -105,7 +107,7 @@ export function GridInput({
             // Do create a new array to avoid mutating the original state
             // also remove the internal _id and _isNew fields
             const { _id, _isNew, ...newRow } = row;
-            question.o.grid_columns?.forEach((column) => {
+            question.o.config?.grid_columns?.forEach((column) => {
                 if (column.type === "date" && newRow[column.label] instanceof Date) {
                     newRow[column.label] = dayjs(newRow[column.label]).format('YYYY-MM-DD');
                 }
@@ -178,9 +180,8 @@ export function GridInput({
         <Box className="w-full">
             <Typography variant="h6">
                 {question.labelText}
+                {question.o.config?.hint && <HintButton hint={question.o.config.hint} />}
             </Typography>
-            {question.o.description && <p>{question.o.description}</p>}
-
             <DataGrid
                 getRowId={(row) => row._id}
                 rows={rows}
@@ -210,8 +211,13 @@ export function GridInput({
                 sx={{ display: 'grid' }}
             />
             {fieldState.invalid &&
-                <FormHelperText error>
+                <Alert severity="error" sx={{ mt: 1 }}>
                     {fieldState.error?.message}
+                </Alert>
+            }
+            {question.o.description &&
+                <FormHelperText>
+                    {question.o.description}
                 </FormHelperText>
             }
         </Box>
@@ -234,7 +240,7 @@ function getHeaders({
     handleSaveClick: (id: GridRowId) => () => void;
     handleCancelClick: (id: GridRowId) => () => void;
 }): GridColDef[] {
-    const columns: GridColDef[] = (question.o.grid_columns || []).map((column, _) => {
+    const columns: GridColDef[] = (question.o.config?.grid_columns || []).map((column, _) => {
         // Corresponding column type
         let columnType: GridColDef['type'];
         switch (column.type) {
@@ -285,7 +291,8 @@ function getHeaders({
     columns.push({
         type: "actions",
         field: "actions",
-        headerName: "Actions",
+        // No header name for the actions column
+        headerName: "",
         flex: 0.5,
         getActions: ({ id }) => getEditActions({
             id,
@@ -303,7 +310,7 @@ function getHeaders({
 function getEmptyRow(question: Question) {
     const row: { [key: string]: PrimitiveType } = {};
     // Populate the row with values
-    question.o.grid_columns?.forEach((column, _) => {
+    question.o.config?.grid_columns?.forEach((column, _) => {
         // Default to boolean false for checkboxes
         if (column.type === "checkbox") {
             row[column.label] = false;

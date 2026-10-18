@@ -12,7 +12,7 @@ describe("CheckboxInput", () => {
 
     renderWithForm({ ui: <CheckboxInput question={question} /> });
 
-    expect(screen.getByLabelText("1. Accept terms")).toBeInTheDocument();
+    expect(screen.getByLabelText("Accept terms")).toBeInTheDocument();
     expect(screen.getByText("You must accept")).toBeInTheDocument();
   });
 
@@ -21,20 +21,22 @@ describe("CheckboxInput", () => {
 
     renderWithForm({ ui: <CheckboxInput question={question} /> });
 
-    const checkbox = screen.getByLabelText("1. Confirm") as HTMLInputElement;
+    const checkbox = screen.getByLabelText("Confirm") as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
 
     fireEvent.click(checkbox);
     expect(checkbox.checked).toBe(true);
   });
 
-  it("shows required error when required checkbox is not checked", async () => {
+  it("shows required error in Alert when required checkbox is not checked", async () => {
     const question = makeQuestion({ type: "checkbox", label: "Required confirm", is_required: true });
 
     renderWithForm({ ui: <CheckboxInput question={question} /> });
 
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
-    expect(await screen.findByText(ERROR_MSG.required)).toBeInTheDocument();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toBeInTheDocument();
+    expect(alert).toHaveTextContent(ERROR_MSG.required);
   });
 });

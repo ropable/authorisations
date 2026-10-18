@@ -1,44 +1,22 @@
 # DBCA Authorisations
-Animal Ethics & Section 40/45 approval process
 
-## Open source release documents
+Streamline DBCA authorisation workflows - from Animal Ethics to Section 40/45 - with versioned, process-driven digital forms built for regulatory compliance.
 
-This repository is licensed under the Apache License 2.0. See `LICENSE` for the full licence text and `NOTICE` for repository-level attribution.
+## Quick start
 
-Third-party dependency notices are maintained in `THIRD_PARTY_NOTICES.md`, with separate backend and frontend sections to reflect the two build ecosystems used by this application.
+**Documentation is located in [docs/README.md](docs/README.md).**
 
-Contributor and security guidance are available in `CONTRIBUTING.md` and `SECURITY.md`.
+**⚠️ Before any feature development, read [docs/FEATURE-DEVELOPMENT.md](docs/FEATURE-DEVELOPMENT.md) — this is the authoritative checklist for all development and must be followed on every session.**
 
-## Testing
+For setup and development instructions, start with [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-Backend tests now run on `pytest` with categories for `unit`, `api`, `security`, `integration`, `slow`, and `smoke`. Pytest uses [backend/config/test_settings.py](backend/config/test_settings.py) so local and CI runs do not depend on PostgreSQL database-creation privileges.
+## Open source
 
-Run the fast backend suite:
+This repository is licensed under the Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-```bash
-cd backend
-poetry run pytest
-```
+Third-party dependency notices are maintained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), with separate backend and frontend sections.
 
-Run backend tests in parallel with coverage:
+## Writing style
 
-```bash
-cd backend
-poetry run pytest -n auto --cov --cov-report=term-missing --cov-report=html --cov-report=xml
-```
-
-Run the frontend suite with Vitest:
-
-```bash
-cd frontend
-bun run test
-```
-
-Run frontend coverage:
-
-```bash
-cd frontend
-bun run test:coverage
-```
-
-Azure Pipelines now runs backend and frontend tests before the Docker build, and publishes coverage for both stacks.
+- Use British English spelling in code comments, docs, command names, and developer guidance.
+- Prefer forms such as `normalise`, `normalisation`, and `authorisation`.

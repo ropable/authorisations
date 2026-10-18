@@ -17,6 +17,29 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# VERSION file lookup with fallback: production Docker first, then dev/CI repo root.
+VERSION_FILE = BASE_DIR / "VERSION"
+if not VERSION_FILE.exists():
+    VERSION_FILE = BASE_DIR.parent / "VERSION"
+
+
+def _read_app_version() -> str:
+    """Read the canonical application version from the repository VERSION file.
+    
+    VERSION must be in MAJOR.MINOR.PATCH format (e.g. 1.0.0).
+    Pre-release suffixes (-uat, -branch-name) are added dynamically by scripts,
+    not stored in the VERSION file itself.
+    """
+    # Keep one source of truth for CI tags, deployment manifests, and UI display.
+    if not VERSION_FILE.exists():
+        return "0.0.0"
+
+    version = VERSION_FILE.read_text(encoding="utf-8").strip()
+    return version if version else "0.0.0"
+
+
+APP_VERSION = _read_app_version()
+
 # Initialise environment variables
 environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 env = environ.Env(
@@ -38,6 +61,10 @@ SECRET_KEY = env("DJANGO_SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env("DEBUG")
 
+# Maintenance mode: returns a user-friendly maintenance page for all requests
+# Useful for safe deployments and database migrations.
+MAINTAINANCE_MODE = env("MAINTAINANCE_MODE", cast=bool, default=False)
+
 ALLOWED_HOSTS = [
     "localhost",
 ]
@@ -54,7 +81,8 @@ if ALLOWED_HOST:
 
 # SSL, CSRF and security settings
 
-# Use sessions for CSRF protection without disclosing CSRF token in cookies
+# Use sessions for CSRF protection without disclosing CSRF token in cookies.
+# This means CSRF tokens are stored in the session, not in a separate cookie.
 CSRF_USE_SESSIONS = True
 
 # Let the application know it's behind a proxy
@@ -65,27 +93,29 @@ USE_X_FORWARDED_HOST = True
 # by checking the X-Forwarded-Proto header
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-# Set custom the CSRF header name that Django will look on the request headers
-# for token validation when authenticating via AJAX etc.
+# CSRF header name that Django will look for in request headers for token validation (API/AJAX).
 CSRF_HEADER_NAME = env("CSRF_HEADER_NAME", default="HTTP_X_CSRFTOKEN")
+
+# CSRF header name to expose to the frontend client for inclusion in API requests.
 CSRF_HEADER_CLIENT = env("CSRF_HEADER_CLIENT", default="X-CsrfToken")
 
-# Set custom CSRF cookie name (probably the session key as well)
-CSRF_COOKIE_NAME = env("CSRF_COOKIE_NAME", default="csrftoken")
+# Keep the session cookie host-scoped and distinct from other DBCA apps that
+# may share parent-domain cookies under `.dbca.wa.gov.au`.
+SESSION_COOKIE_NAME = "authorisations_sessionid"
+SESSION_COOKIE_DOMAIN = None
 
 # Non-secure redirection cache: 1 minute in debug mode, 1 year in production
 SECURE_HSTS_SECONDS = 60 if DEBUG else env("SECURE_HSTS_SECONDS")
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
-if not DEBUG:
-    # Ensure SameSite attribute allows "safe" cross-site requests
-    CSRF_COOKIE_SAMESITE = "Lax"
-    SESSION_COOKIE_SAMESITE = "Lax"
+# The `Lax` value allows the session cookie to be sent with top-level navigations 
+# and GET requests initiated by third-party websites, but not with other types of 
+# cross-site requests (e.g., POST requests). This helps mitigate CSRF attacks 
+# while still allowing some cross-site usage scenarios.
+SESSION_COOKIE_SAMESITE = "Lax"
 
-    # Secure attribute is also recommended if using HTTPS
-    SECURE_ONLY = env("SECURE_ONLY")
-    CSRF_COOKIE_SECURE = SECURE_ONLY
-    SESSION_COOKIE_SECURE = SECURE_ONLY
+# Secure attribute is recommended if using HTTPS
+SESSION_COOKIE_SECURE = env("SECURE_ONLY")
 
 
 # Application definition
@@ -104,14 +134,17 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "django_jsonform",
+    "schema_migration_framework",
     "users",
     "processes",
     "questionnaires",
     "applications",
+    "audit",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "config.maintenance_mode_middleware.MaintenanceModeMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -219,13 +252,21 @@ STORAGES = {
     "default": {
         "BACKEND": "config.storage.PrivateMediaStorage",
     },
-    # Use whitenoise to add compression and caching support for static files.
+    # Use WhiteNoise compression without manifest re-fingerprinting.
+    # PS: Do not use CompressedManifestStaticFilesStorage because its CSS post-processing
+    # can corrupt embedded icon data URIs and cause file-type icons (for example Excel)
+    # to disappear in attachment interfaces.
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
-# Original frontend build directory - doesn't exist in docker environment
+# Treat Vite-hashed JS/CSS assets as immutable for long-term browser caching.
+# Examples: assets/main-h-8CfJcN.css, assets/main-DIYSo1IQ.js
+WHITENOISE_IMMUTABLE_FILE_TEST = r"^.+\-[a-zA-Z0-9_-]{6,}\.(css|js)(?:\.gz)?$"
+
+# Original frontend build directory 
+# - doesn't exist in docker environment, only for developent environment
 FRONTEND_DIST = Path(os.path.abspath(BASE_DIR / "../frontend/dist"))
 if FRONTEND_DIST.exists():
     STATICFILES_DIRS.append(FRONTEND_DIST)
@@ -274,6 +315,28 @@ REST_FRAMEWORK = {
     ],
     "UPLOADED_FILES_USE_URL": False,
 }
+
+# Schema Migration Framework configuration
+# Defines migration targets for schema versioning and evolution.
+# Each target specifies how to locate and transform documents for a specific model.
+SCHEMA_MIGRATION_TARGETS = [
+    {
+        "key": "questionnaires",
+        "model": "questionnaires.Questionnaire",
+        "json_field": "document",
+        "schema_provider": "questionnaires.schema.SCHEMA_VERSION",
+        "migrations_package": "questionnaires.schema_migrations",
+        "version_path": "schema_version",
+    },
+    {
+        "key": "applications",
+        "model": "applications.Application",
+        "json_field": "document",
+        "schema_provider": "applications.schema.SCHEMA_VERSION",
+        "migrations_package": "applications.schema_migrations",
+        "version_path": "schema_version",
+    },
+]
 
 # --- Private Media Storage for Secure File Uploads ---
 
